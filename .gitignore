@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime artifacts written by the gates
+corrob_*.json
+claimgate_*.json
+repro_*.json
+grounding_*.json
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
