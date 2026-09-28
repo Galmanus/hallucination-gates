@@ -2,9 +2,9 @@
 
 This is the longer write-up behind [`README.md`](../README.md). It states the
 mechanism the gates target, why they live at the output boundary rather than
-inside the model, and how they are meant to compose. It introduces no benchmark
-number that the README does not already state; where a number appears it is the
-repo's own selftest measurement, labeled as such.
+inside the model, and how they are meant to compose. It introduces no number
+that the README does not already state; where a number appears it comes from
+`eval/RESULTS.md` and is labeled as such.
 
 ## 1. Hallucination is two stacked failures
 
@@ -92,10 +92,13 @@ The gates are not a menu; they are a sequence, each catching a different failure
 Each gate is aimed at a distinct failure, so the residual that survives *all* of
 them is specific and nameable: a claim that is (a) grounded token by token,
 (b) consistent across samples, and (c) composed into a false *relation* between
-individually true parts. That residual is not zero. `grounding.py`'s own
-selftest puts 2-digit false-grounding at ~12% after its typed-fact rewrite, down
-from 51.5% before it, on the module's internal cases. It is stated here rather
-than hidden because a composition doctrine that hides its residual is theatre.
+individually true parts, plus any claim that carries no number or receipt at
+all. That residual is not zero. What is measured is narrower: on real tool
+output, `grounding.py` v2.4 lets 0.01% of 19,110 injected fabricated tokens
+through (95% CI upper bound 0.03%), against 56.5% of 2-digit fabrications for
+the original substring matcher on 100-999-digit ledgers (`eval/RESULTS.md`).
+It is stated here rather than hidden because a composition doctrine that hides
+its residual is theatre.
 
 ## 5. Honest limits
 
@@ -104,11 +107,11 @@ than hidden because a composition doctrine that hides its residual is theatre.
   benchmarks. The other four are process gates: they gate a pipeline rather than
   score a single generation, and are validated by design and by their offline
   selftests, not by an AUROC number.
-- **No public-benchmark number is included yet.** Today the modules are validated
-  by 124 offline selftests only. A SimpleQA / TruthfulQA evaluation of the
-  semantic-entropy detector is the next milestone. Until it lands, treat this as
-  a reference implementation and a composition doctrine, not a benchmarked
-  state-of-the-art detector.
+- **Only `grounding` is measured.** `eval/RESULTS.md` replays 2,711 real agent
+  turns. The other modules are validated by their offline selftests (194 in
+  total). A SimpleQA / TruthfulQA evaluation of the semantic-entropy detector
+  is still the next milestone; until it lands, treat `selfcheck` as a reference
+  implementation, not a benchmarked detector.
 - **Black-box by design, and capped by it.** No gate reads model internals. That
   is correct for consuming an API model you did not train, and it is the ceiling.
 

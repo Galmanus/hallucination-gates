@@ -9,12 +9,12 @@ standalone and ships an offline `--selftest`. They are meant to be composed: a c
 only leaves the pipeline if it survives every gate that applies to it.
 
 ```bash
-python3 grounding.py   --selftest   # 22 checks
+python3 grounding.py   --selftest   # 92 checks
 python3 selfcheck.py   --selftest   # 28 checks
 python3 corroborate.py --selftest   # 24 checks
 python3 claim.py       --selftest   # 32 checks
 python3 repro.py       --selftest   # 18 checks
-# 124 checks total, no install step
+# 194 checks total, no install step
 ```
 
 ## The idea
@@ -53,23 +53,26 @@ Read this before you judge the repo, because it is the part a careful reviewer c
   hallucination benchmarks. The other four are **process gates**: they gate a pipeline
   rather than score a single generation, and are validated by design and by their offline
   selftests, not by an AUROC number.
-- **No public-benchmark number is included yet.** There is currently no SimpleQA /
-  TruthfulQA evaluation in this repo. Today the modules are validated by **124 offline
-  selftests only**. A benchmark evaluation of the semantic-entropy detector is the next
-  milestone. Until it lands, treat this as a reference implementation and a composition
-  doctrine, not a benchmarked state-of-the-art detector.
+- **`grounding` is measured; the other four are not yet.** [`eval/RESULTS.md`](eval/RESULTS.md)
+  replays 2,711 real agent turns: across 19,110 fabricated tokens in 14 shapes injected
+  into real tool output, v2.4 lets **0.01%** through (95% CI upper bound 0.03%) and wrongly
+  blocks **0.10%** of genuinely grounded ones. That measures the matcher on its own vocabulary
+  (numbers, dates, receipts), not recall on a model's hallucinations in general. There is
+  still no SimpleQA / TruthfulQA run for `selfcheck`; until it lands, treat that module as
+  a reference implementation.
 - **Black-box by design, and capped by it.** Every gate is post-hoc and black-box; none
   reads model internals. That is the right architecture for someone consuming an API model
   they did not train, and it is also the ceiling. The residual that survives *all* gates is
   the hallucination that is (a) grounded token by token, (b) consistent across samples, and
-  (c) composed into a false *relation*. `grounding`'s own measurement puts 2-digit
-  false-grounding at ~12% after its typed-fact rewrite — lower than the 51.5% it started
-  from, but not zero. That residual is a consequence of consuming rather than training a
-  model, and it is stated, not hidden.
+  (c) composed into a false *relation*, plus every claim with no number or receipt in it,
+  which `grounding` does not see at all. On real drafts most `grounding` blocks are values
+  that are true but unsourced this turn, not caught lies (see `eval/RESULTS.md` §2). That
+  residual is a consequence of consuming rather than training a model, and it is stated,
+  not hidden.
 
 ## What this is not
 
-- Not a claim to beat SOTA detectors — no benchmark number is asserted here.
+- Not a claim to beat SOTA detectors. The only measured numbers are `grounding`'s, on its own vocabulary.
 - Not a white-box probe. It cannot read activations and does not pretend to.
 - Not a replacement for training-time fixes (abstention rewards, calibration). It gates
   output; it cannot raise a model's calibration.
