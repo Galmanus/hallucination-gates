@@ -39,8 +39,9 @@ import grounding as v2          # noqa: E402
 import grounding_v1 as v1       # noqa: E402
 import grounding_v21 as v21     # noqa: E402
 import grounding_v23pre as v23p  # noqa: E402
+import grounding_v24 as v24     # noqa: E402
 
-GATES = {"v1": v1.check, "v2.1": v21.check, "v2.3-pre": v23p.check, f"v{v2.VERSION}": v2.check}
+GATES = {"v1": v1.check, "v2.1": v21.check, "v2.3-pre": v23p.check, "v2.4": v24.check, f"v{v2.VERSION}": v2.check}
 
 LABELS = [a + b for a in "ghijklmnopqrstuvwxyz" for b in "ghijklmnopqrstuvwxyz"]
 BUCKETS = [(0, 0), (1, 99), (100, 999), (1000, 9999), (10000, 99999), (100000, 10**12)]

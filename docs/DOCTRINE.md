@@ -94,8 +94,8 @@ them is specific and nameable: a claim that is (a) grounded token by token,
 (b) consistent across samples, and (c) composed into a false *relation* between
 individually true parts, plus any claim that carries no number or receipt at
 all. That residual is not zero. What is measured is narrower: on real tool
-output, `grounding.py` v2.4 lets 0.01% of 19,110 injected fabricated tokens
-through (95% CI upper bound 0.03%), against 56.5% of 2-digit fabrications for
+output, `grounding.py` v2.5 lets 0.01% of 19,110 injected fabricated tokens
+through (95% CI upper bound 0.04%), against 56.5% of 2-digit fabrications for
 the original substring matcher on 100-999-digit ledgers (`eval/RESULTS.md`).
 It is stated here rather than hidden because a composition doctrine that hides
 its residual is theatre.
@@ -107,10 +107,11 @@ its residual is theatre.
   benchmarks. The other four are process gates: they gate a pipeline rather than
   score a single generation, and are validated by design and by their offline
   selftests, not by an AUROC number.
-- **Only `grounding` is measured.** `eval/RESULTS.md` replays 2,711 real agent
-  turns. The other modules are validated by their offline selftests (194 in
-  total). A SimpleQA / TruthfulQA evaluation of the semantic-entropy detector
-  is still the next milestone; until it lands, treat `selfcheck` as a reference
+- **Only `grounding` and `action_gate` are measured.** `eval/RESULTS.md` replays
+  2,711 real agent turns and 709 real side-effecting tool calls. The other
+  modules are validated by their offline selftests (311 across all six). A
+  SimpleQA / TruthfulQA evaluation of the semantic-entropy detector is still
+  the next milestone; until it lands, treat `selfcheck` as a reference
   implementation, not a benchmarked detector.
 - **Black-box by design, and capped by it.** No gate reads model internals. That
   is correct for consuming an API model you did not train, and it is the ceiling.

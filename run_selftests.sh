@@ -3,7 +3,7 @@
 # No dependencies beyond the Python standard library.
 set -u
 
-modules=(grounding selfcheck corroborate claim repro)
+modules=(grounding selfcheck corroborate claim repro action_gate)
 fail=0
 
 for m in "${modules[@]}"; do

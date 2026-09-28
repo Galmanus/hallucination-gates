@@ -1,3 +1,4 @@
+# grounding v2.4, verbatim from commit 33d583e (the version eval/RESULTS.md first measured). Eval baseline only.
 #!/usr/bin/env python3
 """
 grounding.py -- anti-hallucination grounding guard.
@@ -51,16 +52,6 @@ MATCHER v2.1 (2026-09-10 -- structural types):
   canonical dotted quad), everything else keeps the value-level leniency.
   Closes a false negative in the class with the highest reputational stake
   (a receipt in a disclosure) at ~zero false-positive cost.
-
-MATCHER v2.5 (2026-09-28 -- found by an adversarial review of action_gate.py):
-  ISO and month-name dates are now extracted from the DRAFT too; an ISO
-  datetime is one claim (date + HH:MM; seconds and the UTC offset are not
-  times); impossible dates (2026-13-45) are not claims; CSV rows and JSON
-  arrays in tool output are separate numbers ('8491,1200.00' is not
-  84911200); a percent may round from a more precise printed percent (87%
-  from 87.38%, never the reverse); test-runner summaries are ratios
-  ('Tests 90 passed (90)' grounds '90/90'); English verbs that look like
-  month abbreviations ('set 5', 'may 2') are prose.
 
 MATCHER v2.3-v2.4 (2026-09-28 -- eval-driven, then research-verified):
   v2.3 normalizes FORMATS the ledger prints differently from drafts (ISO and
@@ -136,19 +127,7 @@ import json
 import re
 import sys
 
-VERSION = "2.5"
-
-# dates that tools print in OTHER formats than drafts do (v2.3): ISO 8601 and
-# `ls`-style month names, English and Portuguese abbreviations.
-_MONTHS = {"jan": 1, "feb": 2, "fev": 2, "mar": 3, "apr": 4, "abr": 4, "may": 5, "mai": 5,
-           "jun": 6, "jul": 7, "aug": 8, "ago": 8, "sep": 9, "set": 9, "oct": 10, "out": 10,
-           "nov": 11, "dec": 12, "dez": 12}
-_MON = (r'(jan(?:uary|eiro)?|feb(?:ruary)?|fev(?:ereiro)?|mar(?:ch|[çc]o)?|apr(?:il)?|abr(?:il)?|may|mai(?:o)?|'
-        r'jun(?:e|ho)?|jul(?:y|ho)?|aug(?:ust)?|ago(?:sto)?|sep(?:t|tember)?|set(?:embro)?|oct(?:ober)?|'
-        r'out(?:ubro)?|nov(?:ember|embro)?|dec(?:ember)?|dez(?:embro)?)\.?(?![A-Za-z])')
-_ISO_DATE = re.compile(r'(?<!\d)(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?!\d)')  # ISO and URL paths
-_MON_DAY = re.compile(r'(?<![A-Za-z])' + _MON + r'\s+(\d{1,2})(?!\d)(?:,?\s+(\d{4})(?!\d))?', re.IGNORECASE)
-_DAY_MON = re.compile(r'(?<!\d)(\d{1,2})\s+(?:de\s+)?' + _MON + r'(?:\s+(?:de\s+)?(\d{4})(?!\d))?', re.IGNORECASE)
+VERSION = "2.4"
 
 # ---- danger tokens: what an operational hallucination usually asserts ----
 # {L}/{R} are token boundaries. In the DRAFT they are plain `\b`. In the LEDGER
@@ -166,10 +145,6 @@ _DANGER_SPEC = [
     ("strkey",     r'{L}[GC][A-Z2-7]{55}{R}'),                  # Stellar account / contract id
     ("txhash",     r'{L}(?:0x)?[0-9a-fA-F]{8,}{R}'),            # hex receipt, 0x optional (v2.2)
     ("base58",     r'{L}[1-9A-HJ-NP-Za-km-z]{32,88}{R}'),       # Solana-style pubkey / signature
-    # dates written the way tools print them (v2.4 draft side): ISO, month names
-    ("isodate",    r'(?<!\d)\d{4}[-/]\d{1,2}[-/]\d{1,2}(?!\d)'),
-    ("namedate",   r'(?i:(?<![A-Za-z])' + _MON + r'\s+\d{1,2}(?!\d)(?:,?\s+\d{4}(?!\d))?)'),
-    ("namedate",   r'(?i:(?<!\d)\d{1,2}\s+(?:de\s+)?' + _MON + r'(?:\s+(?:de\s+)?\d{4}(?!\d))?)'),
 ]
 # magnitude suffixes (v2.3): 'R$296K', 'R$ 20 mil', 'US$ 1,5 bi', 'R$5M'
 _SUFFIX_MULT = [(r'milh[õo]es|milh[ãa]o|million|millions|mi|MM|M|m', 10**6),
@@ -207,6 +182,17 @@ def _build(bounds, override=None):
 DANGER = _build(_B_DRAFT)
 LEDGER_DANGER = _build(_B_LEDGER, _LEDGER_OVERRIDE)
 
+# dates that tools print in OTHER formats than drafts do (v2.3): ISO 8601 and
+# `ls`-style month names, English and Portuguese abbreviations.
+_MONTHS = {"jan": 1, "feb": 2, "fev": 2, "mar": 3, "apr": 4, "abr": 4, "may": 5, "mai": 5,
+           "jun": 6, "jul": 7, "aug": 8, "ago": 8, "sep": 9, "set": 9, "oct": 10, "out": 10,
+           "nov": 11, "dec": 12, "dez": 12}
+_MON = (r'(jan(?:uary|eiro)?|feb(?:ruary)?|fev(?:ereiro)?|mar(?:ch|[çc]o)?|apr(?:il)?|abr(?:il)?|may|mai(?:o)?|'
+        r'jun(?:e|ho)?|jul(?:y|ho)?|aug(?:ust)?|ago(?:sto)?|sep(?:t|tember)?|set(?:embro)?|oct(?:ober)?|'
+        r'out(?:ubro)?|nov(?:ember|embro)?|dec(?:ember)?|dez(?:embro)?)\.?(?![A-Za-z])')
+_ISO_DATE = re.compile(r'(?<!\d)(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?!\d)')  # ISO and URL paths
+_MON_DAY = re.compile(r'(?<![A-Za-z])' + _MON + r'\s+(\d{1,2})(?!\d)(?:,?\s+(\d{4})(?!\d))?', re.IGNORECASE)
+_DAY_MON = re.compile(r'(?<!\d)(\d{1,2})\s+(?:de\s+)?' + _MON + r'(?:\s+(?:de\s+)?(\d{4})(?!\d))?', re.IGNORECASE)
 
 # tags that DECLARE uncertainty -> the token is no longer asserted as a live fact.
 # Matches both English and Portuguese hedge words by design (the guard accepts
@@ -240,19 +226,12 @@ COMPAT = {
     "date":     {"date"},
     "strkey":   {"strkey"},
     "base58":   {"base58"},
-    "isodate":  {"date"},
-    "namedate": {"date"},
 }
 NUMERIC = {"currency", "percent", "number"}
 
 _NUM = re.compile(r'\d[\d.,]*\d|\d')
 # a real minus: not after a letter/digit/hyphen (CSS '--x--75', UUID '6a6-7aaa'),
 # and the number is not glued to a letter afterwards
-# test-runner summaries: vitest 'Tests 90 passed (90)', pytest '12 passed, 1 failed',
-# cargo 'test result: ok. 12 passed; 0 failed'
-_TEST_SUMMARY = re.compile(r'(?P<p1>\d+)\s+passed\s*\((?P<t1>\d+)\)'
-                           r'|(?P<p2>\d+)\s+passed;\s*(?P<f2>\d+)\s+failed'
-                           r'|(?P<p3>\d+)\s+passed(?:,\s*(?P<f3>\d+)\s+failed)?')
 _SIGNED_NUM = re.compile(r'(?<![0-9A-Za-z\-−])[-−](?:\d[\d.,]*\d|\d)(?![0-9A-Za-z])|\d[\d.,]*\d|\d')
 _RATIO_SPLIT = re.compile(r'\s*(?:de|of|/)\s*')
 
@@ -325,19 +304,7 @@ def _unsigned_values(t, side):
         if '.' in t and ',' in t:
             dec = '.' if t.rfind('.') > t.rfind(',') else ','
             other = ',' if dec == '.' else '.'
-            groups = t.split(other)
-            well_formed = (1 <= len(groups[0]) <= 3 and dec not in groups[0]
-                           and all(len(g) == 3 and dec not in g for g in groups[1:-1])
-                           and len(groups[-1].split(dec)[0]) == 3)
-            if well_formed:
-                return {_canon(Decimal(t.replace(other, '').replace(dec, '.')))}
-            # not a thousands-grouped number: a CSV row or a JSON array ('8491,1200.00',
-            # '1200.00,350.00,99.90'). Each field is its own number.
-            out = set()
-            for g in groups:
-                if g:
-                    out |= _unsigned_values(g, side)
-            return out
+            return {_canon(Decimal(t.replace(other, '').replace(dec, '.')))}
         sep = '.' if '.' in t else (',' if ',' in t else None)
         if sep is None:
             # zero-padded ('0057', 'PR-0057') is an identifier, not the value 57 (v2.3)
@@ -348,9 +315,6 @@ def _unsigned_values(t, side):
                 return {_canon(Decimal(''.join(parts)))}
             return {p if (len(p) > 1 and p[0] == '0') else _canon(Decimal(p)) for p in parts if p}
         head, tail = parts
-        if side == "ledger" and sep == ',' and len(head) >= 2 and len(tail) >= 4:
-            # '8491,1200' in tool output is two CSV fields far more often than a decimal
-            return {_canon(Decimal(head + '.' + tail)), _canon(Decimal(head)), _canon(Decimal(tail))}
         if len(tail) == 3 and head.lstrip('0'):
             thousands = _canon(Decimal(head + tail))
             if side == "draft":
@@ -425,18 +389,6 @@ def cores(s, kind, side="draft"):
         return {f"{int(h)}:{mm}"} if h.isdigit() and mm.isdigit() else set()
     if kind == "date":
         return date_cores(re.findall(r'\d+', s), side)
-    if kind == "isodate":
-        y, mo, d = re.findall(r'\d+', s)[:3]
-        return date_cores([d, mo, y], side)
-    if kind == "namedate":
-        mm = re.search(_MON, s, re.IGNORECASE)
-        mo = _MONTHS.get(mm.group(1)[:3].lower()) if mm else None
-        nums = re.findall(r'\d+', s)
-        day = next((n for n in nums if len(n) <= 2), None)
-        year = next((n for n in nums if len(n) == 4), None)
-        if not (mo and day):
-            return set()
-        return date_cores([day, mo] + ([year] if year else []), side)
     c = norm_core(s, kind)
     return {c} if c else set()
 
@@ -475,8 +427,6 @@ def ledger_facts(ledger):
     ratio_pairs = []
     masked = list(text)
     for kind, rx in LEDGER_DANGER:
-        if kind in ("isodate", "namedate"):
-            continue  # ledger dates in these formats come from the dedicated passes below
         for m in rx.finditer(text):
             span = m.group(0)
             if kind == "base58" and not _valid_base58(span):
@@ -497,11 +447,6 @@ def ledger_facts(ledger):
                         facts.add((c, "number"))
             for i in range(m.start(), m.end()):
                 masked[i] = ' '
-    for m in _TEST_SUMMARY.finditer(text):
-        g = m.groupdict()
-        passed = int(g["p1"] or g["p2"] or g["p3"])
-        total = int(g["t1"]) if g["t1"] else passed + int(g["f2"] or g["f3"] or 0)
-        ratio_pairs.append((str(passed), str(total)))
     for m in _ISO_DATE.finditer(text):
         y, mo, d = m.groups()
         for c in date_cores([d, mo, y], "ledger"):
@@ -530,20 +475,7 @@ def _valid_date(tok):
     return (1 <= a <= 31 and 1 <= b <= 12) or (1 <= a <= 12 and 1 <= b <= 31)
 
 
-def _prose_month(tok):
-    """a lowercase 3-letter month-like word with no year and no 'de' is prose
-    ('set 5', 'may 2', '3 out of'); 'Sep 21', '21 de set', 'set 21, 2026' stay dates."""
-    mm = re.search(r'[A-Za-z]+', tok)
-    word = mm.group(0) if mm else ""
-    has_year = re.search(r'\d{4}', tok) is not None
-    return word.islower() and len(word) <= 3 and not has_year and not re.search(r'\bde\b', tok)
-
-
 _PT_YEAR = re.compile(r'\d+\s*de\s*(19|20)\d\d$')
-# an ISO datetime is ONE claim: the date and the HH:MM. Seconds and the UTC
-# offset are not times ('03:00' inside '-03:00' is a time zone).
-_ISO_DT = re.compile(r'(?<!\d)(\d{4}-\d{1,2}-\d{1,2})[T ](\d{1,2}:\d{2})(?::\d{2}(?:\.\d+)?)?'
-                     r'(?:Z|[+-]\d{2}:?\d{2})?(?![\d:])')
 _SLASH_RUN = re.compile(r'\d+(?:/\d+){3,}')     # 11/4/1/1: a list, not a date or ratio
 
 
@@ -574,22 +506,12 @@ def extract(draft):
     for line in draft.splitlines():
         runs = [m.span() for m in _SLASH_RUN.finditer(line)]  # 11/4/1/1 style lists
         taken = []  # spans claimed by dates with year and receipts
-        for m in _ISO_DT.finditer(line):
-            if not date_cores(re.findall(r'\d+', m.group(1))[::-1], "draft"):
-                continue
-            for tok, kind in ((m.group(1), "isodate"), (m.group(2), "time")):
-                if (tok, line) not in seen:
-                    seen.add((tok, line))
-                    out.append((tok, kind, line))
-            taken.append(m.span())
         for kind, rx in DANGER:
             for m in rx.finditer(line):
                 tok = m.group(0).strip()
                 span = (m.start(), m.end())
                 if kind in ("date", "ratio") and any(s <= span[0] and span[1] <= e for s, e in runs):
                     continue
-                if kind in ("time", "isodate") and any(s <= span[0] and span[1] <= e for s, e in taken):
-                    continue  # already emitted as part of an ISO datetime
                 if kind == "ratio" and _inside_dotted(line, *span):
                     continue
                 if kind == "date":
@@ -607,11 +529,7 @@ def extract(draft):
                         continue
                 if kind == "currency" and re.fullmatch(r'\$\d', tok):
                     continue  # $1 in awk/shell, not a price
-                if kind == "namedate" and _prose_month(tok):
-                    continue  # "I set 5 retries", "3 out of 5": verbs, not dates
-                if kind == "isodate" and not date_cores(re.findall(r'\d+', tok)[::-1], "draft"):
-                    continue  # 2026-13-45 is not a date (a test fixture, an error example)
-                if kind in ("strkey", "txhash", "isodate"):
+                if kind in ("strkey", "txhash"):
                     taken.append(span)
                 key = (tok, line)
                 if key in seen:
@@ -667,8 +585,6 @@ def _match(tok, kind, facts, ratio_pairs):
     mult = suffix_mult(tok) if kind in NUMERIC else None
     if mult and _rounds_to(tok, mult, facts, compat):
         return True, False
-    if kind == "percent" and _rounds_to(tok, 1, facts, {"percent"}):
-        return True, False  # 87% from a printed 87.38% (never the reverse)
     if kind == "date" and tok.count('/') == 1:
         # a bare dd/mm may be what the ledger printed as a ratio (e.g. "3/1")
         return _match(tok, "ratio", facts, ratio_pairs)[0], False
@@ -1021,9 +937,9 @@ def selftest():
     cases.append(("iso_date_other_day_blocks", r["block"] is True))
     r = check("merged on 28/09/2025", ISO)
     cases.append(("iso_date_other_year_blocks", r["block"] is True))
-    r = check("file from 21/09", "-rw-rw-r-- 1 user user 701 set 21 17:22 report.py")
+    r = check("file from 21/09", "-rw-rw-r-- 1 galmanus galmanus 701 set 21 17:22 wave_jev.py")
     cases.append(("pt_ls_month_name_grounds", r["block"] is False))
-    r = check("file from 21/09", "-rw-r--r-- 1 root root 701 Sep 21 17:22 report.py")
+    r = check("file from 21/09", "-rw-r--r-- 1 root root 701 Sep 21 17:22 wave_jev.py")
     cases.append(("en_ls_month_name_grounds", r["block"] is False))
     r = check("starts at 9:00", "cron: starts 09:00 UTC")
     cases.append(("time_zero_pad_grounds", r["block"] is False))
@@ -1122,53 +1038,6 @@ def selftest():
     cases.append(("numeric_band_declares", r["block"] is False))
     r = check("plano banda larga 300 Mbps por R$ 99", "")
     cases.append(("banda_larga_not_a_declaration", r["block"] is True))
-
-    # (V) ISO and month-name dates in the DRAFT were invisible (ledger side only)
-    ISO2 = '"merged_at": "2026-09-27T10:55:00Z"'
-    r = check("merged on 2026-09-27", "")
-    cases.append(("draft_iso_date_extracted", r["block"] is True))
-    r = check("merged on 2026-09-27", ISO2)
-    cases.append(("draft_iso_date_grounds_on_iso", r["block"] is False))
-    r = check("merged on 2026-09-27", "merged 27/09/2026 by the bot")
-    cases.append(("draft_iso_date_grounds_on_ddmm", r["block"] is False))
-    r = check("deadline 2026-10-12", "created 2026-09-28")
-    cases.append(("draft_iso_other_day_blocks", r["block"] is True))
-    r = check("file from Sep 21", "-rw-r--r-- 1 root root 701 Sep 21 17:22 report.py")
-    cases.append(("draft_month_name_grounds", r["block"] is False))
-    r = check("file from Sep 22", "-rw-r--r-- 1 root root 701 Sep 21 17:22 report.py")
-    cases.append(("draft_month_name_other_day_blocks", r["block"] is True))
-    r = check("reunião em 21 de setembro de 2026", "")
-    cases.append(("draft_pt_month_name_extracted", r["block"] is True))
-    #     ...but English verbs that look like month abbreviations are prose
-    r = check("I set 5 retries and it may 2x the load; out 3 of them failed", "")
-    cases.append(("english_verbs_not_dates", not any(f["kind"] == "namedate" for f in r["flagged"])))
-
-    # (W) action-gate review findings that live in the matcher (28/09)
-    #     an ISO datetime is ONE claim: its date and its HH:MM; seconds and the
-    #     UTC offset are not times ('03:00' in '-03:00' was flagged as a time)
-    r = check("call at 2026-09-29T15:00:00-03:00", "user: call on 29/09/2026 at 15:00")
-    cases.append(("iso_datetime_grounds_date_and_time", r["block"] is False))
-    r = check("call at 2026-09-29T16:00:00-03:00", "user: call on 29/09/2026 at 15:00")
-    cases.append(("iso_datetime_wrong_hour_blocks", r["block"] is True))
-    #     CSV rows and compact JSON arrays are separate numbers, not one merged number
-    r = check("total R$ 1.200,00", "INV-8491,1200.00,acme@cliente.example")
-    cases.append(("csv_row_fields_are_separate_numbers", r["block"] is False))
-    r = check("paid US$ 350.00", "[1200.00,350.00,99.90]")
-    cases.append(("json_array_fields_are_separate_numbers", r["block"] is False))
-    #     a percent rounded from a percent the tool printed (87.38% -> 87%)
-    r = check("coverage 87%", "Coverage: 87.38%")
-    cases.append(("percent_rounding_grounds", r["block"] is False))
-    r = check("coverage 88%", "Coverage: 87.38%")
-    cases.append(("percent_wrong_rounding_blocks", r["block"] is True))
-    #     test-runner summaries are ratios: 'Tests 90 passed (90)' grounds '90/90'
-    r = check("vitest 90/90", "Tests  90 passed (90)")
-    cases.append(("test_runner_ratio_grounds", r["block"] is False))
-    r = check("vitest 91/91", "Tests  90 passed (90)")
-    cases.append(("test_runner_wrong_ratio_blocks", r["block"] is True))
-
-    # (X) an impossible ISO date is not a date claim (a test fixture like 2026-13-45)
-    r = check("reject input 2026-13-45 with a 400", "")
-    cases.append(("invalid_iso_date_not_a_token", not any(f["kind"] == "isodate" for f in r["flagged"])))
 
     # (P) a ratio is ORDERED: "226 of 100" does not ground on "100 of 226"
     r = check("passed 226 of 100", "passed 100 of 226")

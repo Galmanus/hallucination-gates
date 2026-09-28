@@ -33,6 +33,7 @@ import grounding as v2          # noqa: E402
 import grounding_v1 as v1       # noqa: E402
 import grounding_v21 as v21     # noqa: E402
 import grounding_v23pre as v23p  # noqa: E402
+import grounding_v24 as v24     # noqa: E402
 
 # context an agent loads at session start (memory, instructions, its own system
 # prompt). Defaults are generic Claude Code locations; add your agent's prompt
@@ -84,8 +85,9 @@ def main():
             r1 = v1.check(t["draft"], t["ledger"])
             r21 = v21.check(t["draft"], t["ledger"])
             r23 = v23p.check(t["draft"], t["ledger"])
+            r24 = v24.check(t["draft"], t["ledger"])
             r2 = v2.check(t["draft"], t["ledger"])
-            for g, rr in (("v1", r1), ("v2.1", r21), ("v2.3-pre", r23), (f"v{v2.VERSION}", r2)):
+            for g, rr in (("v1", r1), ("v2.1", r21), ("v2.3-pre", r23), ("v2.4", r24), (f"v{v2.VERSION}", r2)):
                 blocked[g] += rr["block"]; flagged_tokens[g] += len(rr["flagged"])
             for fl in r2["flagged"]:
                 tok = fl["token"]
@@ -115,7 +117,7 @@ def main():
     res = {
         "turns": turns,
         "blocked_in_production_log": prod_blocked,
-        "replay_block_rate": {g: round(blocked[g] / turns, 4) for g in ("v1", "v2.1", "v2.3-pre", f"v{v2.VERSION}")},
+        "replay_block_rate": {g: round(blocked[g] / turns, 4) for g in ("v1", "v2.1", "v2.3-pre", "v2.4", f"v{v2.VERSION}")},
         "replay_blocked_turns": dict(blocked),
         "flagged_tokens": dict(flagged_tokens),
         "current_flag_verdicts": dict(verdicts),

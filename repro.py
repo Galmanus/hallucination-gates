@@ -324,14 +324,14 @@ def cmd_case(case):
 # ---------------------------------------------------------------------------
 
 TEMPLATE = {
-    "id": "altside-bola-001",
-    "target": "https://api.altside.example/v1/accounts/{id}",
+    "id": "acme-bola-001",
+    "target": "https://api.acme.example/v1/accounts/{id}",
     "vuln_class": "BOLA",
     "claim": "GET /accounts/{other_id} returns another user's data using my token",
     "poc": {
         "cmd": ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
                 "-H", "Authorization: Bearer $MY_TOKEN",
-                "https://api.altside.example/v1/accounts/OTHER_ID"],
+                "https://api.acme.example/v1/accounts/OTHER_ID"],
         "timeout": 20
     },
     "prediction": {
@@ -340,7 +340,7 @@ TEMPLATE = {
         ],
         "control": {
             "cmd": ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-                    "https://api.altside.example/v1/accounts/OTHER_ID"],
+                    "https://api.acme.example/v1/accounts/OTHER_ID"],
             "timeout": 20
         }
     }
@@ -352,6 +352,21 @@ TEMPLATE = {
 # ---------------------------------------------------------------------------
 
 def _selftest():
+    """Run the selftest in a private temp dir: it writes lock and result files,
+    and two runs sharing a working directory deleted each other's locks."""
+    import shutil
+    import tempfile
+    old = os.getcwd()
+    tmp = tempfile.mkdtemp(prefix="repro-selftest-")
+    try:
+        os.chdir(tmp)
+        return _selftest_in_cwd()
+    finally:
+        os.chdir(old)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _selftest_in_cwd():
     checks = []
 
     def ck(name, cond):
