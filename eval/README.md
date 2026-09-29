@@ -12,6 +12,12 @@ python3 eval/synth.py  --out ~/.cache/hg-eval/synth_final.json
 python3 eval/realrun.py     # -> realrun.json + a private label sample
 python3 eval/postblock.py   # what the agent did after each production block
 python3 eval/actions.py --static "~/.claude/projects/*/memory/*.md"   # action_gate.py on real tool calls
+python3 eval/coincidence.py --out ~/.cache/hg-eval/coincidence.json    # add --no-index for the v2.5 path
+
+# end-to-end A/B (runs the real agent: needs Claude credentials, costs about US$ 0.30 per run)
+python3 eval/ab/tasks.py --absent 27 --present 5 --derived 4
+python3 eval/ab/run.py --parallel 4       # arm A hooks off, arm B hooks on
+python3 eval/ab/score.py                  # independent judge; python3 eval/ab/test_score.py for its tests
 ```
 
 | script | question it answers | ground truth |
@@ -19,9 +25,11 @@ python3 eval/actions.py --static "~/.claude/projects/*/memory/*.md"   # action_g
 | `synth.py` | On real ledgers, does the matcher block numbers that are not there, and pass numbers that are? | constructed: fabricated tokens pass a strict absence test that doesn't use the gate, and grounded tokens are copied verbatim from the ledger |
 | `realrun.py` | On real agent drafts, what does the gate flag, and where did each flagged token actually come from? | none for truth, so provenance is traced, then a random sample of untraceable flags is labeled by hand |
 | `postblock.py` | After a production block, did the agent ground, declare, drop, or keep the token bare? | the transcript itself |
+| `coincidence.py` | Does an invented value pass as sourced just because the ledger is big? | random values with no absence filter, so every acceptance is a coincidence; controls: a value copied from the ledger with and without its label, and a 64-hex hash |
+| `ab/` | With the same agent and question, do the hooks change how often it asserts an invented value, and do they cost correct answers? | fictional tasks with the truth known by construction; the judge in `ab/score.py` does not use the gate's code |
 | `actions.py` | Replaying every real side-effecting tool call in order: would `action_gate.py` allow, ask or deny it, and does it catch a one-character mutation of a value it allowed? | real calls are mostly legitimate (deny/ask is an upper bound on friction); mutations are constructed |
 
-`baselines/grounding_v21.py` is v2.1 as committed at `0d498fc`: the version the production hook ran, and the one the fixes were measured against. `baselines/grounding_v23pre.py` is v2.3 before the three leaks the research pass reproduced (suffix base, sign, exempt words). It is kept so the leak closure itself can be measured. `baselines/grounding_v1.py` is the original substring matcher. It is taken from the agent's own git history (commit `37e759f`, 2026-09-07), verbatim except for one anonymized vendor name, and kept only so that v1 and v2 can be compared on the same data.
+`baselines/grounding_v25.py` is v2.5 as committed at `b450533`, before the look-elsewhere test. `baselines/grounding_v21.py` is v2.1 as committed at `0d498fc`: the version the production hook ran, and the one the fixes were measured against. `baselines/grounding_v23pre.py` is v2.3 before the three leaks the research pass reproduced (suffix base, sign, exempt words). It is kept so the leak closure itself can be measured. `baselines/grounding_v1.py` is the original substring matcher. It is taken from the agent's own git history (commit `37e759f`, 2026-09-07), verbatim except for one anonymized vendor name, and kept only so that v1 and v2 can be compared on the same data.
 
 ## Privacy
 

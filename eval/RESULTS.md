@@ -1,6 +1,6 @@
 # grounding.py and action_gate.py: measured results
 
-Run on 2026-09-28. Five versions of the matcher are compared on the same data:
+Run on 2026-09-28 (sections 5 and 6 on 2026-09-28/29). Six versions of the matcher are compared on the same data:
 
 | label | what it is | file |
 |---|---|---|
@@ -8,7 +8,8 @@ Run on 2026-09-28. Five versions of the matcher are compared on the same data:
 | **v2.1** | the typed-fact matcher committed at `0d498fc`; this is the version the author's production stop-hook ran on the day | `baselines/grounding_v21.py` |
 | **v2.3-pre** | v2.3 as it was before a research pass found three leaks in it | `baselines/grounding_v23pre.py` |
 | **v2.4** | commit `33d583e`, 92 selftests: the version published first | `baselines/grounding_v24.py` |
-| **v2.5** | the current `grounding.py`, 109 selftests. Its extra fixes came from an adversarial review of `action_gate.py` | `grounding.py` |
+| **v2.5** | commit `b450533`, 109 selftests. Its extra fixes came from an adversarial review of `action_gate.py` | `baselines/grounding_v25.py` |
+| **v2.6** | the current `grounding.py`, 119 selftests: v2.5 plus the look-elsewhere test of section 5. Sections 1 to 4 were measured on v2.5 | `grounding.py` |
 
 Rates carry Wilson 95% intervals. Seed 42.
 
@@ -49,6 +50,8 @@ Rates carry Wilson 95% intervals. Seed 42.
 - **The rest** are lines that used to be exempted by a word.
 
 v2.4 still blocks 71 fewer turns than v2.1, the version that was running in production, and v2.5 45 fewer.
+
+**The 0.01% above excludes coincidence by construction.** `synth.py` only injects values whose digits are absent from the ledger. Section 5 measures what it cannot: an invented value that happens to be present. On v2.5 an invented integer percent passed as sourced on 71.04% of 100k-character ledgers; v2.6 cuts that to 10.21%.
 
 ## 1. How the synthetic benchmark works, and what it got wrong along the way
 
@@ -169,17 +172,68 @@ Real calls were mostly legitimate, so deny + ask is an upper bound on friction, 
 
 **What v1.1 does not do:** it checks values, not intent; a value the agent computes in a tool call without echoing it literally counts as tool output; exfiltrating a secret the agent legitimately read is not a provenance violation; and side-effect detection is a vocabulary, so an unknown shell program that writes remotely is not gated.
 
+## 5. Coincidence in large ledgers (`coincidence.py`, v2.6)
+
+`synth.py` never tests an invented value that happens to be in the ledger. That case is the common one on big turns: v2.5 lets a percent or a currency ground on a unit-less ledger number of the same value (tools print `"port": 8443`), so an invented `37%` grounds on any bare `37` anywhere in the turn's tool output. The idea of measuring it came from the README of [laya](https://github.com/NandhaKishorM/laya), which warns that a maximum over sliding windows drifts up with the number of windows even with no signal. The statistical name is the look-elsewhere effect.
+
+**Method.** Real ledgers from the corpus are concatenated to five controlled sizes (1k, 10k, 100k, 1M and 4M characters), 12 replicates each. Into each, 40 random values of each shape are checked, with no absence filter, so every acceptance is a coincidence. Two controls: `copied` takes a danger token verbatim from the ledger and gives it a random label; `copied_ctx` gives it the nearest word before it in the ledger, which is how a real answer quotes a value. Seed 11, n = 480 per random cell. Uniform draws are a lower bound: a real fabrication tends to sit near real values of its context.
+
+**v2.6.** For each ledger match, the gate computes the share of that value's shape space the ledger already covers with distinct facts of the same kind (2-digit integers: 90 values; times: 1,440; dates: 366). Above `ALPHA = 0.10`, the match needs an anchor: a word of 4+ letters or a number of 3+ digits from the same draft line within 240 characters of an occurrence of the value. Without one the verdict is `COINCIDENT` (severity 1, blocks). Ordered ratios are exempt; they already need both operands in order.
+
+| invented value accepted as sourced | ledger 10k | 100k | 1M | 4M |
+|---|--:|--:|--:|--:|
+| integer percent, v2.5 path | 12.08% | 71.04% | 91.25% | 93.12% |
+| integer percent, **v2.6** | **3.54%** [2.22, 5.60] | **10.21%** [7.81, 13.24] | **24.38%** [20.75, 28.41] | **47.29%** [42.86, 51.76] |
+| decimal percent, v2.5 → v2.6 | 0.83% → 0.42% | 6.67% → 1.25% | 10.62% → 3.12% | 15.42% → 7.29% |
+| `dd/mm` date, v2.5 → v2.6 | 1.46% → 1.46% | 7.50% → 1.67% | 12.92% → 3.12% | 32.50% → 2.08% |
+| ISO date, v2.5 → v2.6 | 1.04% → 1.04% | 4.17% → 0.62% | 6.88% → 0.83% | 22.50% → 1.46% |
+| time, v2.5 → v2.6 | 0.42% → 0.42% | 1.25% → 1.25% | 0.62% → 0.62% | 8.96% → 4.38% |
+| `R$` amount with cents, 8-hex and 64-hex hashes | 0% | 0% | 0% | 0% |
+| **legit copy with its label** (`copied_ctx`), v2.6 | 98.84% | 100% | 100% | 99.79% |
+| legit copy with a random label (`copied`), v2.6 | 99.71% | 84.17% | 89.79% | 70.00% |
+
+The v2.5 path is the same code with the look-elsewhere test off. `4.812`, `17 testes` and `238 ms` are not danger tokens at all and were not scored.
+
+**Weighted by real ledger sizes.** Non-empty turn ledgers in the corpus have a median of 2,244 characters and a 90th percentile of 135,885. Interpolating the table over the 1,616 non-empty ledgers, an invented integer percent passes on 37.5% of turns under v2.5 and 7.6% under v2.6 (interpolated, not measured per turn).
+
+**Cost on real drafts** (2,711 turns, v2.5 path vs v2.6 on the same index): 70 of 6,539 token verdicts change (56 percents, 9 currency amounts and 2 dates become `COINCIDENT`; 3 lines become `DECLARED`), and blocked turns go from 850 to 871. Every `COINCIDENT` value is, by definition, present in the ledger, so section 2's "verbatim in ledger" error count no longer applies to v2.6. A hand-read sample of 25 changed verdicts (labelled by Claude, provisional) held about 6 real catches (opinion estimates that had grounded by chance) and about 10 false blocks. Two of the false blocks were a bug, fixed and turned into a selftest (a ratio's concatenated digits were being density-tested). The remaining false blocks: a Portuguese draft quoting an English ledger (no shared anchor word), CSS values, and round constants such as a 95% confidence level.
+
+**Parity and latency.** The production copy of the matcher gives the same verdict as `grounding.py` on all 2,711 corpus turns. `check()` latency is unchanged: p50 3,101 ms vs 3,096 ms on the 15 largest ledgers (up to 3.8 MB), 10 ms vs 13 ms on 150 random turns.
+
+**Not solved.** At 4M characters, 47.29% of invented integer percents still pass, because common words (`item`, `total`) sit near some occurrence of almost any 2-digit number. Anchors are not weighted by their own frequency, and anchors do not cross languages.
+
+## 6. End-to-end A/B pilot (`ab/`)
+
+Every number above measures the matcher. `ab/` measures the agent: the same headless Claude Code (`claude -p`, Opus 5.5, read-only tools, 12 turns) answers the same question twice, arm A with all hooks disabled and arm B with the production hooks. Tasks are fictional (invented carriers, invoices, repos), so neither the web nor the model's memory has the answer. Each task runs with its fixture directory as working directory, so no project instructions or memory reach the agent. An independent judge (`ab/score.py`, its own regexes, truth known by construction, 10 regression cases in `ab/test_score.py`) scores the answers.
+
+Pilot, 2026-09-28: 36 tasks × 2 arms, 72 runs, US$ 21.56.
+
+| | arm A (no hooks) | arm B (hooks) |
+|---|--:|--:|
+| asked value absent: invented and asserted | 0/27 [0, 12.5] | 0/27 [0, 12.5] |
+| asked value absent: labelled guess ("rough estimate: 12:40") | 3/27 (11.1%) [3.9, 28.1] | 0/27 |
+| asked value present or derivable: correct | 100% (9) | 100% (9) |
+| mean seconds per run | 17.6 | 22.6 |
+| cost | US$ 10.44 | US$ 11.12 |
+
+**No reduction could be measured, because the base rate was zero.** The fixtures announced their own gaps (`"total": null`, `not computed`, `pending`), and with the gap written in the file Opus 5.5 did not invent. The hooks blocked 13 of 36 arm-B runs: 4 blocks removed guesses the draft itself labelled as estimates (all 3 the judge caught, Fisher p = 0.236), and 9 blocked correct arithmetic the matcher does not recognise as derived (a subtotal of listed items, per-row coverage, a UTC to BRT conversion, a sum written as `A 39.000 + B 11.000 + C 72.000`). The judge's first scoring said 25.9% vs 22.2% fabricated. Reading the 13 flagged answers showed every one was a judge false positive (a file mtime seen through `ls -l`, a duration read as a clock time, per-row arithmetic). Those cases are now the judge's regression tests.
+
+A harder set is designed and not yet run: fixtures that do not announce the gap, a user who pushes for a number, and a weaker model as a second arm.
+
 ## Predictions registered before the runs, scored
 
 1. *"v1 passes more than 40% of fabricated 2-digit numbers on ledgers above 500 digits; v2 passes less than 5%."* **Confirmed.** v1: 56.5% at 100-999 digits and 94.2% at 1,000-9,999. v2.1: 0.7% and 2.3%.
 2. *"Precision on real blocks is below 50%: most blocks are true-but-unsourced, not fabrication."* **Confirmed.** About 66% of flags are carried context, and about 16% are unsourced factual assertions (v2.3 orphan share × orphan labels).
 3. *(research pass)* *"After closing the suffix leak, the suffix probe falls from 13.2% to below 0.5%, and false blocks on suffixed tokens stay below 1%."* **Confirmed** on the corrected probe: 20.7% → 0.02%, with overall false blocks unchanged at 0.10%.
 4. *(pending, 2026-10-12)* With the revision-checking hook in production, the share of flagged values kept bare after a block falls from 28.0% to below 10%.
+5. *(pending, not yet run)* On the hard A/B set, a weaker model without hooks asserts an invented value on at least 10% of absent-value tasks. Below 5% would mean the grounding gate's value is in long sessions, not single-file tasks.
 
 ## What this does not measure
 
 - **Whether a flagged assertion was actually false.** That needs a truth label per claim. Unsourced is not the same as wrong.
 - **Recall on the model's own fabrications.** The synthetic set measures the matcher against a fabrication generator, not the model's error distribution. "0.01%" means that almost no fabricated token of these 14 shapes got through. It does not mean that almost no hallucination gets through.
+- **Coincidence in ledgers above 4M characters, or anchors weighted by frequency.** Section 5 stops at 4M and treats every anchor word alike.
+- **An end-to-end reduction.** The A/B pilot's base rate was zero (section 6).
 - **Anything outside the gate's vocabulary.** Non-numeric claims (names, causal claims, "I ran the tests", "nothing found") are not danger tokens, and they pass untouched.
 - **`selfcheck`, `corroborate`, `repro` and `claim`.**
 - **Whether `action_gate.py` stops a real attack.** The replay is the author's own benign traffic plus constructed mutations; no live prompt-injection campaign was run against it.

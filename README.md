@@ -13,10 +13,11 @@ Both are measured on one author's real agent traffic: 2,711 turns and 709 side-e
 | `grounding` · fabricated token let through, 14 shapes | 19,110 | 43.7% (v1) | **0.01%** [0.00, 0.04] |
 | `grounding` · fabricated receipt let through (`0x…` hash, Stellar strkey, base58) | 4,746 | 100% (v2.1) | **0.00%** [0.00, 0.08] |
 | `grounding` · real token copied from the ledger, wrongly blocked | 2,926 | 2.5% (v2.1) | **0.10%** [0.03, 0.30] |
+| `grounding` · invented integer percent passing by coincidence, 100k-char ledger | 480 | 71.04% (v2.5) | **10.21%** [7.81, 13.24] |
 | `action_gate` · real side-effecting call denied | 709 | 43.6% (v1.0) | **0.14%** [0.02, 0.79] |
 | `action_gate` · one-character mutation of an allowed value caught | 329 | 89.1% (v1.0) | **100%** [98.9, 100] |
 
-**Read these narrowly.** 0.01% says almost no injected fabrication of these 14 shapes gets past the matcher. It does not say almost no hallucination gets through. A claim with no danger token in it (a name, a causal claim, a bare count such as `412 tests passed`) is invisible to `grounding`, and `action_gate` checks values, not intent. The [limits](#what-it-does-not-do) are stated below, with numbers.
+**Read these narrowly.** 0.01% says almost no injected fabrication of these 14 shapes gets past the matcher, and those fabrications are built with digits absent from the ledger. An invented value that happens to be present is a separate row: it was the largest leak found so far, and v2.6 cuts it but does not close it. It does not say almost no hallucination gets through. A claim with no danger token in it (a name, a causal claim, a bare count such as `412 tests passed`) is invisible to `grounding`, and `action_gate` checks values, not intent. The [limits](#what-it-does-not-do) are stated below, with numbers.
 
 The gate exists because of one incident. An agent's draft stated a bus carrier, departure and arrival times, a fare and a seat count as if observed, and no tool call that turn had returned any of them. `grounding.py --selftest` reproduces that case as its first check.
 
@@ -161,7 +162,7 @@ v2 tokenizes the ledger into the same types as the draft and matches discrete fa
 
 | module | refuses to forward | verdicts | selftests |
 |---|---|---|--:|
-| `grounding.py` | an amount, percent, date, time, ratio, IP or receipt not traceable to this turn's tool output | `GROUNDED` `DERIVED` `DECLARED` pass; `COMPOSED` `UNSOURCED` `FALSE_OBSERVED` block | 109 |
+| `grounding.py` | an amount, percent, date, time, ratio, IP or receipt not traceable to this turn's tool output | `GROUNDED` `DERIVED` `DECLARED` pass; `COINCIDENT` `COMPOSED` `UNSOURCED` `FALSE_OBSERVED` block | 119 |
 | `action_gate.py` | a side-effecting tool call whose payload carries a value no user turn or tool output contains | per value `GROUNDED` `UNTRUSTED` `OPAQUE` `UNSOURCED`; per call `allow` `ask` `deny` | 100 |
 | `selfcheck.py` | an answer whose resamples disagree in meaning, or agree with no source behind them (semantic entropy, Farquhar et al. 2024) | `ASSERT` `ASSERT_WEAK` `TRUST_TOOL` `FORCE_GROUND` `ABSTAIN` `INCONCLUSIVE` `REFUSED` | 28 |
 | `corroborate.py` | a fact backed by one origin, or by sources that share an upstream | `CORROBORATED` `CONFLICTED` `CIRCULAR` `SINGLE_SOURCE` `UNCORROBORATED` | 24 |
@@ -178,13 +179,15 @@ Hallucination is two stacked failures (Kalai et al., 2025). A pretraining floor:
 
 ## Measured
 
-`grounding.py` (v2.5, the current file) and `action_gate.py` (v1.1) are measured. The corpus is 2,711 real agent turns from 1,337 Claude Code transcripts on the author's machine, dated 2026-08-26 to 2026-09-28. It holds private conversations and credentials that appeared in logs, so it is not committed. Three instruments, each with its own ground truth:
+`grounding.py` and `action_gate.py` (v1.1) are measured. The tables below are v2.5; the current file is v2.6, which adds the look-elsewhere test measured in [RESULTS.md §5](eval/RESULTS.md). The corpus is 2,711 real agent turns from 1,337 Claude Code transcripts on the author's machine, dated 2026-08-26 to 2026-09-28. It holds private conversations and credentials that appeared in logs, so it is not committed. Three instruments, each with its own ground truth:
 
 | script | question | ground truth |
 |---|---|---|
 | [`eval/synth.py`](eval/synth.py) | On real ledgers, does the matcher block tokens that are absent and pass tokens that are present? | fabricated tokens pass a strict absence test that does not use the gate; real tokens are copied from the ledger as whole tokens |
 | [`eval/realrun.py`](eval/realrun.py) | On real first drafts, what gets flagged, and where did each flagged token come from? | provenance traced through the session, then a sample of untraceable flags labeled |
 | [`eval/postblock.py`](eval/postblock.py) | After a production block, did the agent ground, declare, drop or keep the token? | the transcript itself |
+| [`eval/coincidence.py`](eval/coincidence.py) | Does an invented value pass as sourced just because the ledger is big? | values drawn at random, with no absence filter, against real ledgers grown to 1k–4M characters |
+| [`eval/ab/`](eval/ab) | Does the agent itself assert fewer invented values with the hooks on than off? | fictional tasks whose truth is known by construction, scored by an independent judge |
 | [`eval/actions.py`](eval/actions.py) | Replaying every real side-effecting tool call in order: allow, ask or deny, and is a one-character mutation of an allowed value caught? | real calls (deny + ask bounds friction); constructed mutations |
 
 More synthetic probes. v1, v2.1, v2.3-pre and v2.4 (`33d583e`) are kept in [`eval/baselines/`](eval/baselines):
@@ -240,7 +243,8 @@ In an 80-token labeled sample of untraceable flags from the v2.3 run, 47.5% [36.
 - **Bare counts pass too.** `1240 users`, `350 ms` and `412 tests passed` have no currency, percent, time, date or ratio shape, so they are not extracted. The exception is an integer of 8 or more digits, which matches the hex-hash shape and is checked like a receipt.
 - **A flag means unsourced this turn, not false.** About 66% of real flags are carried context: the value appeared earlier in the session or in static context, not in this turn's tool output. Whether each flagged value was true was not measured. Numbers read from a screenshot and well-known constants such as `169.254.169.254` are real, and they still flag.
 - **0.01% is not a hallucination rate.** The synthetic set measures the matcher against the author's fabrication generator, not the model's own error distribution. Recall on real model fabrications is not measured.
-- **One false negative is chosen.** A currency, percent or hash also grounds on a unit-less ledger number of the same value, because tools print `"port": 8443`. So `R$ 8.443` grounds on that port, and `tx 0x12345678` grounds on `{"count": 12345678}`. A guard that cries wolf gets disabled. The 1.1% sign-flip residual is this leniency: a flipped percent grounds on a real negative number elsewhere in the ledger.
+- **One false negative is chosen, and v2.6 only narrows it.** A currency, percent or hash also grounds on a unit-less ledger number of the same value, because tools print `"port": 8443`. So `R$ 8.443` grounds on that port, and `tx 0x12345678` grounds on `{"count": 12345678}`. A guard that cries wolf gets disabled. In a big ledger this leniency lets invented values through by coincidence. v2.6 requires a label or a number from the same line next to the match when the ledger is dense with values of that shape. On 4M-character ledgers, 47.29% of invented integer percents still pass, and the new check adds false blocks: blocked real turns rose from 850 to 871. The 1.1% sign-flip residual is the same leniency.
+- **No end-to-end reduction is measured yet.** In an A/B pilot (Opus 5.5, 36 fictional tasks, hooks off vs on) neither arm asserted an invented value (0/27 each), so there was nothing to reduce. The hooks removed 3 labelled guesses and blocked correct arithmetic in 9 of 36 runs ([RESULTS.md §6](eval/RESULTS.md)).
 - **Labels by the same model family.** The 80-token samples were labeled by Claude, the agent's own family. Rates derived from them are provisional until a human pass.
 - **Only `grounding` and `action_gate` are measured.** `selfcheck` has no SimpleQA or TruthfulQA run yet, so treat it as a reference implementation. `corroborate`, `repro` and `claim` are process gates with no public benchmark, validated by their selftests only.
 - **`action_gate` checks values, not intent.** The right amount to the right address for the wrong reason passes. A value the agent computes in a tool call without echoing it (`python -c "print(9*10**8)"`) counts as tool output. Exfiltrating a secret the agent legitimately read is not a provenance violation. Side-effect detection is a vocabulary: an unknown program that writes remotely is not gated. No live prompt-injection campaign was run against it; the replay is benign traffic plus constructed mutations.
@@ -253,7 +257,7 @@ In an 80-token labeled sample of untraceable flags from the v2.3 run, 47.5% [36.
 
 ```text
 === grounding.py --selftest ===
-selftest: 109/109
+selftest: 119/119
 === selfcheck.py --selftest ===
 selftest: 28/28 passed
 === corroborate.py --selftest ===

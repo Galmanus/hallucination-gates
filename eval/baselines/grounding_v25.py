@@ -136,7 +136,7 @@ import json
 import re
 import sys
 
-VERSION = "2.6"
+VERSION = "2.5"
 
 # dates that tools print in OTHER formats than drafts do (v2.3): ISO 8601 and
 # `ls`-style month names, English and Portuguese abbreviations.
@@ -463,18 +463,6 @@ def _valid_base58(tok):
             and any(c.islower() for c in tok))
 
 
-class LedgerIndex(dict):
-    """(core, kind) -> ledger positions where that fact occurs (v2.6). Answers
-    `in` and iterates like the facts set, so it can stand in for it."""
-    def __init__(self, text):
-        super().__init__()
-        self.text = text
-        self.shape_counts = {}
-
-    def add(self, fact, pos):
-        self.setdefault(fact, []).append(pos)
-
-
 def ledger_facts(ledger):
     """
     Discrete, TYPED facts from the ledger. No concatenation: each typed fact
@@ -482,14 +470,8 @@ def ledger_facts(ledger):
     a phantom raw '92'.
     Returns (facts, ratio_pairs): facts={(core, kind)}, ratio_pairs=[(op, ...)].
     """
-    idx, ratio_pairs = ledger_index(ledger)
-    return set(idx), ratio_pairs
-
-
-def ledger_index(ledger):
-    """ledger_facts with positions: (LedgerIndex, ratio_pairs)."""
     text = ledger or ""
-    facts = LedgerIndex(text)
+    facts = set()
     ratio_pairs = []
     masked = list(text)
     for kind, rx in LEDGER_DANGER:
@@ -505,14 +487,14 @@ def ledger_index(ledger):
                     ratio_pairs.append(tuple(ops))
                     for raw in re.findall(r'\d+', span):
                         for c in num_values(raw, "ledger"):
-                            facts.add((c, "number"), m.start())
+                            facts.add((c, "number"))
             else:
                 for c in cores(span, kind, side="ledger"):
-                    facts.add((c, kind), m.start())
+                    facts.add((c, kind))
                 # a purely-decimal txhash is also usable as a raw number
                 if kind == "txhash" and span.isdigit():
                     for c in num_values(span, "ledger"):
-                        facts.add((c, "number"), m.start())
+                        facts.add((c, "number"))
             for i in range(m.start(), m.end()):
                 masked[i] = ' '
     for m in _TEST_SUMMARY.finditer(text):
@@ -523,7 +505,7 @@ def ledger_index(ledger):
     for m in _ISO_DATE.finditer(text):
         y, mo, d = m.groups()
         for c in date_cores([d, mo, y], "ledger"):
-            facts.add((c, "date"), m.start())
+            facts.add((c, "date"))
     for rx, order in ((_MON_DAY, "md"), (_DAY_MON, "dm")):
         for m in rx.finditer(text):
             g = m.groups()
@@ -531,11 +513,11 @@ def ledger_index(ledger):
             mo = _MONTHS.get(mon[:3].lower())
             if mo:
                 for c in date_cores([day, mo] + ([year] if year else []), "ledger"):
-                    facts.add((c, "date"), m.start())
+                    facts.add((c, "date"))
     rest = ''.join(masked)
     for m in _SIGNED_NUM.finditer(rest):
         for c in num_values(m.group(0), "ledger"):
-            facts.add((c, "number"), m.start())
+            facts.add((c, "number"))
     return facts, ratio_pairs
 
 
@@ -693,90 +675,6 @@ def _match(tok, kind, facts, ratio_pairs):
     return False, False
 
 
-# ---- look-elsewhere (v2.6): a match in a ledger dense with same-shape values is not evidence ----
-# eval/coincidence.py: an invented integer percent passed as sourced on 77.92% of
-# 100k-char ledgers and 93.75% of 1M-char ones. Concept from laya's README
-# (github.com/NandhaKishorM/laya): a max over more windows drifts up with no signal.
-ALPHA = 0.10    # max share of a shape's value space the ledger may cover for a lone match to count
-WINDOW = 240    # chars on each side of a ledger occurrence searched for an anchor
-_ANCHOR_WORD = re.compile(r'[A-Za-zÀ-ÿ_][\w./\-]{3,}')
-_ANCHOR_NUM = re.compile(r'(?<![\d.,])\d{3,}(?![\d])')
-_STOPWORDS = set("""
-para pela pelo como mais menos este esta esse essa isso aqui onde quando sobre entre depois antes ainda
-também tambem então entao porque pois cada todo toda todos todas outro outra sendo seria foram será sera
-that this with from have been were will would into than then them they their there what when which while
-about after before other some such only also just very more most each your youre isnt dont
-""".split())
-
-
-def _shape(core, kind):
-    if kind in NUMERIC:
-        ip, _, dp = core.lstrip("-").partition(".")
-        return ("n", len(ip.lstrip("0")) or 1, len(dp))
-    if kind == "time":
-        return ("time",)
-    if kind == "date":
-        return ("date", core.count("/"))
-    return None
-
-
-def _space(shape):
-    if not shape:
-        return None
-    if shape[0] == "n":
-        return (10 if shape[1] == 1 else 9 * 10 ** (shape[1] - 1)) * 10 ** shape[2]
-    # dates: one year of days, with or without the year, since ledger dates cluster in the current one
-    return {"time": 1440, "date": 366}[shape[0]]
-
-
-def _density(index, core, kind):
-    """share of this value's shape space the ledger already covers with distinct facts of this kind."""
-    sh = _shape(core, kind)
-    space = _space(sh)
-    if not space:
-        return 0.0
-    key = (sh, kind)
-    if key not in index.shape_counts:
-        # distinct magnitudes: a ledger '-5%' also yields '5' (sign-magnitude grounding), one value not two
-        index.shape_counts[key] = len({c.lstrip("-") for c, k in index if k == kind and _shape(c, k) == sh})
-    return index.shape_counts[key] / space
-
-
-def _anchors(tok, line):
-    rest = line.replace(tok, " ")
-    out = set()
-    for m in _ANCHOR_WORD.finditer(rest):
-        w = m.group(0).strip("./-").lower()
-        if len(w) >= 4 and w not in _STOPWORDS and not w.isdigit():
-            out.add(w)
-            out.update(p for p in re.split(r"[./\-]", w) if len(p) >= 4 and p not in _STOPWORDS)
-    out.update(m.group(0) for m in _ANCHOR_NUM.finditer(rest))
-    return out
-
-
-def _specific(tok, kind, line, index):
-    """True when the ledger match is evidence: the value is rare for its shape in
-    this ledger, or an anchor from the draft line sits next to an occurrence."""
-    if kind == "ratio":
-        return True   # grounded only by an ORDERED pair; its core is concatenated digits, not a value
-    compat = COMPAT.get(kind, {"number"})
-    hits = [(c, fk) for c in cores(tok, kind, side="draft") for fk in compat if (c, fk) in index]
-    if not hits:
-        return True   # grounded by rounding or ratio fallback: not assessed here
-    if any(_density(index, c, fk) <= ALPHA for c, fk in hits):
-        return True
-    anchors = _anchors(tok, line)
-    if not anchors:
-        return False
-    text = index.text
-    for fact in hits:
-        for pos in index[fact][:500]:
-            win = text[max(0, pos - WINDOW):pos + WINDOW].lower()
-            if any(a in win for a in anchors):
-                return True
-    return False
-
-
 # ---- derived arithmetic (v2.4, roadmap R4): recompute shown work, never exempt it ----
 _CUR_PREFIX = r'(?:R\$|US?\$|\$|USD\s?|BRL\s?|EUR\s?|€\s?)'
 _OPND = (r'(?:' + _CUR_PREFIX + r'\s?\d(?:[\d.,]*\d)?(?:\s?' + _SUF + r'(?![A-Za-z]))?'
@@ -856,19 +754,14 @@ def _exempt(line):
     return bool(EXEMPT.search(line) or EXEMPT_SYM.search(line))
 
 
-def classify(tok, kind, line, facts, ratio_pairs, index=None):
+def classify(tok, kind, line, facts, ratio_pairs):
     grounded, composed = _match(tok, kind, facts, ratio_pairs)
-    coincident = False
     if grounded:
-        if index is None or _specific(tok, kind, line, index):
-            return "GROUNDED"
-        coincident = True          # in the ledger, but only as one of many same-shape values
+        return "GROUNDED"
     if kind in NUMERIC and _derived(tok, kind, line, facts, ratio_pairs):
         return "DERIVED"           # shown arithmetic over grounded operands, recomputed
     if _exempt(line):
         return "DECLARED"          # stated as uncertain, honest (covers composed too)
-    if coincident:
-        return "COINCIDENT"        # look-elsewhere: needs a label or line next to the value
     if composed:
         return "COMPOSED"          # real operands, the relation is not in the source
     if OBSERVED.search(line):
@@ -876,15 +769,15 @@ def classify(tok, kind, line, facts, ratio_pairs, index=None):
     return "UNSOURCED"             # the silent hallucination
 
 
-SEVERITY = {"FALSE_OBSERVED": 3, "UNSOURCED": 2, "COMPOSED": 1, "COINCIDENT": 1,
+SEVERITY = {"FALSE_OBSERVED": 3, "UNSOURCED": 2, "COMPOSED": 1,
             "DECLARED": 0, "DERIVED": 0, "GROUNDED": 0}
 
 
 def check(draft, ledger):
-    index, ratio_pairs = ledger_index(ledger)
+    facts, ratio_pairs = ledger_facts(ledger)
     findings = []
     for tok, kind, line in extract(draft):
-        verdict = classify(tok, kind, line, index, ratio_pairs, index=index)
+        verdict = classify(tok, kind, line, facts, ratio_pairs)
         findings.append({
             "token": tok, "kind": kind, "verdict": verdict,
             "severity": SEVERITY[verdict], "line": line.strip()[:120],
@@ -897,7 +790,6 @@ def check(draft, ledger):
         "declared": sum(1 for f in findings if f["verdict"] == "DECLARED"),
         "composed": sum(1 for f in findings if f["verdict"] == "COMPOSED"),
         "derived": sum(1 for f in findings if f["verdict"] == "DERIVED"),
-        "coincident": sum(1 for f in findings if f["verdict"] == "COINCIDENT"),
         "flagged": flagged,
         "verdict": "HALLUCINATION_RISK" if flagged else "GROUNDED_OK",
         "block": bool(flagged),
@@ -914,8 +806,9 @@ def render(r):
     ]
     if r["flagged"]:
         lines.append("  --- FLAGGED (no discrete grounding in ledger) ---")
+        label = {3: "FALSE_OBSERVED!", 2: "UNSOURCED", 1: "COMPOSED"}
         for f in r["flagged"]:
-            tag = "FALSE_OBSERVED!" if f["verdict"] == "FALSE_OBSERVED" else f["verdict"]
+            tag = label[f["severity"]]
             lines.append(f"  [{tag}] {f['kind']:8} {f['token']!r}")
             lines.append(f"           line: {f['line']!r}")
     else:
@@ -1284,38 +1177,6 @@ def selftest():
     #     ...but only real month names: "market 25" / "decimal 3" are not dates
     r = check("deadline 25/03", "market 25 closed, decimal 3 places")
     cases.append(("month_prefix_words_not_dates", r["block"] is True))
-
-    # (Y) look-elsewhere (v2.6): a match in a ledger dense with values of the same
-    #     shape is not evidence by itself (eval/coincidence.py: an invented '37%'
-    #     passed on 77.92% of 100k-char ledgers). Dense match -> needs an anchor from
-    #     the draft line (a label or another number) near the ledger occurrence.
-    dense = "\n".join(f"metric_{chr(97 + i % 26)}{i}: {n}" for i, n in enumerate(range(10, 100)))
-    r = check("a cobertura final é 37%", dense)
-    cases.append(("dense_bare_number_is_coincident",
-                  r["block"] is True and any(f["verdict"] == "COINCIDENT" for f in r["flagged"])))
-    r = check("coverage 37%", dense + "\ncoverage: 37\n" + dense)
-    cases.append(("dense_with_label_anchor_grounds", r["block"] is False))
-    r = check("| src/core.py | 283 | 26 | 37% |", dense + "\nsrc/core.py 283 26 37\n" + dense)
-    cases.append(("dense_with_number_anchor_grounds", r["block"] is False))
-    r = check("a cobertura é 37%", "coverage: 37")
-    cases.append(("sparse_bare_number_still_grounds", r["block"] is False))
-    r = check("coverage 37%", dense + "\nshards ok, total 37%\n" + dense)
-    cases.append(("sparse_same_type_percent_grounds", r["block"] is False))
-    times = "\n".join(f"{h:02d}:{m:02d} event ok" for h in range(8, 20) for m in range(0, 60, 2))
-    r = check("o deploy termina às 14:36", times)
-    cases.append(("dense_time_is_coincident",
-                  r["block"] is True and any(f["verdict"] == "COINCIDENT" for f in r["flagged"])))
-    r = check("canary às 14:36", times.replace("14:36 event ok", "14:36 canary started"))
-    cases.append(("dense_time_with_anchor_grounds", r["block"] is False))
-    r = check("total R$ 4.812,37", dense + "\ninvoice R$ 4.812,37\n" + dense)
-    cases.append(("high_entropy_value_unaffected_by_density", r["block"] is False))
-    #     an ordered ratio pair is already specific: density does not apply (corpus 28/09: '17/17')
-    dense4 = "\n".join(f"row_{i}: {n}" for i, n in enumerate(range(1003, 9999, 7)))  # includes a bare 1717
-    r = check("vitest 17/17", dense4 + "\nTests  17 passed (17)\n" + dense4)
-    cases.append(("ratio_pair_exempt_from_density", r["block"] is False))
-    #     old callers that pass only facts keep the v2.5 behaviour
-    f25, p25 = ledger_facts(dense)
-    cases.append(("classify_without_index_is_v25", classify("37%", "percent", "a cobertura é 37%", f25, p25) == "GROUNDED"))
 
     passed = sum(1 for _, ok in cases if ok)
     for name, ok in cases:

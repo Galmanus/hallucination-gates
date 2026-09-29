@@ -97,6 +97,10 @@ all. That residual is not zero. What is measured is narrower: on real tool
 output, `grounding.py` v2.5 lets 0.01% of 19,110 injected fabricated tokens
 through (95% CI upper bound 0.04%), against 56.5% of 2-digit fabrications for
 the original substring matcher on 100-999-digit ledgers (`eval/RESULTS.md`).
+Those fabrications are absent from the ledger by construction. An invented
+value that happens to be present is the larger residual: on 100k-character
+ledgers v2.5 passed 71.04% of invented integer percents and v2.6 passes 10.21%
+(`eval/RESULTS.md` section 5).
 It is stated here rather than hidden because a composition doctrine that hides
 its residual is theatre.
 
@@ -109,7 +113,7 @@ its residual is theatre.
   selftests, not by an AUROC number.
 - **Only `grounding` and `action_gate` are measured.** `eval/RESULTS.md` replays
   2,711 real agent turns and 709 real side-effecting tool calls. The other
-  modules are validated by their offline selftests (311 across all six). A
+  modules are validated by their offline selftests (321 across all six). A
   SimpleQA / TruthfulQA evaluation of the semantic-entropy detector is still
   the next milestone; until it lands, treat `selfcheck` as a reference
   implementation, not a benchmarked detector.
