@@ -163,7 +163,7 @@ v2 tokenizes the ledger into the same types as the draft and matches discrete fa
 
 | module | refuses to forward | verdicts | selftests |
 |---|---|---|--:|
-| `grounding.py` | an amount, percent, date, time, ratio, IP or receipt not traceable to this turn's tool output | `GROUNDED` `DERIVED` `DECLARED` pass; `COINCIDENT` `COMPOSED` `UNSOURCED` `FALSE_OBSERVED` block | 119 |
+| `grounding.py` | an amount, percent, date, time, ratio, IP or receipt not traceable to this turn's tool output | `GROUNDED` `DERIVED` `DECLARED` pass; `COINCIDENT` `COMPOSED` `UNSOURCED` `FALSE_OBSERVED` block | 137 |
 | `action_gate.py` | a side-effecting tool call whose payload carries a value no user turn or tool output contains | per value `GROUNDED` `UNTRUSTED` `OPAQUE` `UNSOURCED`; per call `allow` `ask` `deny` | 100 |
 | `selfcheck.py` | an answer whose resamples disagree in meaning, or agree with no source behind them (semantic entropy, Farquhar et al. 2024) | `ASSERT` `ASSERT_WEAK` `TRUST_TOOL` `FORCE_GROUND` `ABSTAIN` `INCONCLUSIVE` `REFUSED` | 28 |
 | `corroborate.py` | a fact backed by one origin, or by sources that share an upstream | `CORROBORATED` `CONFLICTED` `CIRCULAR` `SINGLE_SOURCE` `UNCORROBORATED` | 24 |
@@ -227,7 +227,7 @@ In an 80-token labeled sample of untraceable flags from the v2.3 run, 47.5% [36.
 
 ## In production
 
-`grounding.py` runs as a Claude Code Stop hook in front of the author's own autonomous agent. The hook is not in this repo. On the day of the eval it ran v2.1. `eval/postblock.py` read the transcripts to see what the agent did after 288 production blocks covering 738 flagged tokens:
+`grounding.py` runs as a Claude Code Stop hook in front of the author's own autonomous agent, through the author's own hook script. `grounding.py --hook` is the generic version of that script, and the behaviour below is the same (see [Hooks](#hooks)). On the day of the eval it ran v2.1. `eval/postblock.py` read the transcripts to see what the agent did after 288 production blocks covering 738 flagged tokens:
 
 | after a block, the flagged value was | share |
 |---|--:|
@@ -238,8 +238,21 @@ In an 80-token labeled sample of untraceable flags from the v2.3 run, 47.5% [36.
 
 "Declared" here uses `postblock.py`'s own tag list, which also counts `fonte:`, `source:` and `derivado`. The hook forced one revision and never checked it, so 28.0% of flagged values stayed in the answer with no source and no tag. For those values, a block that trusts the revision was only advisory. Since 2026-09-28 the agent runs the v2.4 matcher behind a revision-checking hook: a value that comes back bare gets a second block, and the cap is logged as an `escape` instead of passing silently. The registered prediction, checked on 2026-10-12 with the same script, is that bare-after-block falls below 10%.
 
+## Hooks
+
+Both gates run as Claude Code hooks. The settings block is in the [README](../README.md#option-1-in-claude-code-automatically).
+
+**`grounding.py --hook` (Stop).** Reads the session transcript, takes the current turn (everything after the last real user prompt), and checks the assistant's text against every source the model saw in that turn: tool results, what the user typed (including prompts queued mid-turn), background-task notifications and `!` command output. Hook feedback and injected meta rows are never sources, so the gate's own message cannot ground the retry. A compaction summary or a meta row is not a turn boundary; a user who pastes the gate's message is. The final reply is read from the event's `last_assistant_message` too, because the transcript is often not flushed yet when the Stop hook runs. On a block it prints `{"decision": "block", "reason": ...}`, and Claude Code hands the reason back to the model. The revision is checked against the whole turn's tool output, including tools called to find a source. A value that comes back bare gets a second block that names what persisted and what is new. After `GROUNDING_MAX_BLOCKS` blocks (default 2) the answer goes out with a `systemMessage` warning instead: never a loop. A continuation that another Stop hook requested is left alone. It fails open: if the transcript cannot be read or the check raises, it prints nothing and exits 0. `GROUNDING_METRICS=<path>` appends one JSON row per decision (`pass`, `revision_pass`, `block`, `reblock`, `escape`, `no_draft`, `skip_other_hook`, `error`). A bad `GROUNDING_MAX_BLOCKS` value falls back to 2.
+
+**`grounding.py check` (command line)** exits 0 when every value grounds, 1 on a block, and 3 when an input file cannot be read.
+
+**`action_gate.py --hook` (PreToolUse).** Stays silent on reads. For a side-effecting call it prints a `permissionDecision` of `deny` or `ask` in the hook contract, and fails closed on its own errors. `ACTION_GATE_MODE=ask` turns every deny into an ask. `ACTION_GATE_STATIC=<glob>:<glob>` adds operator files (memory, CLAUDE.md) as trusted evidence. `ACTION_GATE_METRICS=<path>` appends one JSON row per judged call.
+
+**Timeouts.** `check()` takes about 10 ms on half of real turns and up to about 6 s on the largest ledgers measured (3.8 MB of tool output in one turn). A hook that times out does not block, so set the timeout above that: 15 s in the README's example.
+
 ## What it does not do
 
+- **The agent's own output is a source.** Every tool result in the turn counts, including a value the agent printed itself with `echo`, wrote to a file and read back, or got from a subagent. `action_gate.py` closes these paths; `grounding.py` does not.
 - **Non-numeric claims pass untouched.** Names, causal claims, "I ran the tests" and "nothing found" carry no danger token.
 - **Bare counts pass too.** `1240 users`, `350 ms` and `412 tests passed` have no currency, percent, time, date or ratio shape, so they are not extracted. The exception is an integer of 8 or more digits, which matches the hex-hash shape and is checked like a receipt.
 - **A flag means unsourced this turn, not false.** About 66% of real flags are carried context: the value appeared earlier in the session or in static context, not in this turn's tool output. Whether each flagged value was true was not measured. Numbers read from a screenshot and well-known constants such as `169.254.169.254` are real, and they still flag.
@@ -258,7 +271,7 @@ In an 80-token labeled sample of untraceable flags from the v2.3 run, 47.5% [36.
 
 ```text
 === grounding.py --selftest ===
-selftest: 119/119
+selftest: 137/137
 === selfcheck.py --selftest ===
 selftest: 28/28 passed
 === corroborate.py --selftest ===

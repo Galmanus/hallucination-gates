@@ -9,7 +9,7 @@ Run on 2026-09-28 (sections 5 and 6 on 2026-09-28/29). Six versions of the match
 | **v2.3-pre** | v2.3 as it was before a research pass found three leaks in it | `baselines/grounding_v23pre.py` |
 | **v2.4** | commit `33d583e`, 92 selftests: the version published first | `baselines/grounding_v24.py` |
 | **v2.5** | commit `b450533`, 109 selftests. Its extra fixes came from an adversarial review of `action_gate.py` | `baselines/grounding_v25.py` |
-| **v2.6** | the current `grounding.py`, 119 selftests: v2.5 plus the look-elsewhere test of section 5. Sections 1 to 4 were measured on v2.5 | `grounding.py` |
+| **v2.6** | the current `grounding.py`, 137 selftests: v2.5 plus the look-elsewhere test of section 5 and a Claude Code Stop hook mode (`--hook`). Sections 1 to 4 were measured on v2.5 | `grounding.py` |
 
 Rates carry Wilson 95% intervals. Seed 42.
 

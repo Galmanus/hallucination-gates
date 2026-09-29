@@ -133,6 +133,7 @@ FLAG), plus grounded cases that must pass.
 """
 import argparse
 import json
+import os
 import re
 import sys
 
@@ -923,6 +924,180 @@ def render(r):
     return "\n".join(lines)
 
 
+# ------------------------- Claude Code Stop hook (--hook) -------------------------
+# Wire it as a Stop hook: python3 grounding.py --hook. When the turn's answer has a
+# value no tool returned this turn, it blocks the stop with a reason; Claude Code
+# hands the reason back to the model, which revises. The revision is checked too:
+# a value that comes back bare gets a second block, then the answer goes out with a
+# visible warning (never a loop). It FAILS OPEN: if the hook itself breaks, the
+# answer goes out unchecked rather than trapping the session.
+# Env: GROUNDING_MAX_BLOCKS (default 2), GROUNDING_METRICS (path: one JSON row per decision).
+HOOK_TAG = "GROUNDING GATE"
+_STOP_FB = "Stop hook feedback"
+_FB_TOKEN = re.compile(r"\] \w+: '([^']+)'")
+_HOOK_LABEL = {
+    "FALSE_OBSERVED": "FALSE_OBSERVED: claims to have seen it, and no tool returned it",
+    "UNSOURCED": "UNSOURCED: no tool returned this value",
+    "COMPOSED": "COMPOSED: both numbers are real, the relation between them is not in any output",
+    "COINCIDENT": "COINCIDENT: the value appears only as one of many similar values, with no label next to it",
+}
+
+
+def _row_text(row):
+    c = (row.get("message") or {}).get("content") if isinstance(row.get("message"), dict) else None
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return " ".join(x.get("text", "") for x in c if isinstance(x, dict) and isinstance(x.get("text"), str))
+    return ""
+
+
+def _origin(row):
+    o = row.get("origin")
+    return o.get("kind") if isinstance(o, dict) else o
+
+
+def _is_real_prompt(row):
+    """a row that starts a turn: a typed prompt, or a task notification the model answers.
+    Not: tool results, meta rows (hook feedback, injected context), compaction summaries."""
+    if row.get("type") != "user" or row.get("isMeta") or row.get("isCompactSummary") \
+            or row.get("isVisibleInTranscriptOnly"):
+        return False
+    c = (row.get("message") or {}).get("content") if isinstance(row.get("message"), dict) else None
+    if isinstance(c, list) and any(isinstance(x, dict) and x.get("type") == "tool_result" for x in c):
+        return False
+    # a human who pastes the gate's message is asking a question, not relaying feedback
+    return isinstance(c, (str, list)) and (not _row_text(row).startswith(_STOP_FB) or _origin(row) == "human")
+
+
+def _is_own_feedback(row):
+    return (row.get("type") == "user" and _origin(row) != "human"
+            and _row_text(row).startswith(_STOP_FB) and HOOK_TAG in _row_text(row))
+
+
+def _collect(rows):
+    """(draft, ledger). draft: the assistant's text. ledger: every source the model saw in these
+    rows: tool results, what the user typed, background-task results and `!` command output.
+    Hook feedback and injected meta rows are never sources (the gate's own message would
+    otherwise ground the retry)."""
+    draft, ledger = [], []
+    for r in rows:
+        if r.get("type") == "attachment":
+            a = r.get("attachment") or {}
+            if isinstance(a, dict) and a.get("type") == "queued_command" and isinstance(a.get("prompt"), str):
+                ledger.append(a["prompt"])  # a task result or a prompt queued mid-turn
+            continue
+        if r.get("type") == "user" and not r.get("isMeta") and not _row_text(r).startswith(_STOP_FB):
+            ledger.append(_row_text(r))  # what the user typed, a task notification, `!` output
+        if "toolUseResult" in r and r.get("type") == "user":
+            tur = r["toolUseResult"]
+            ledger.append(tur if isinstance(tur, str) else json.dumps(tur, ensure_ascii=False))
+        c = (r.get("message") or {}).get("content") if isinstance(r.get("message"), dict) else None
+        if not isinstance(c, list):
+            continue
+        for x in c:
+            if not isinstance(x, dict):
+                continue
+            if r.get("type") == "assistant" and x.get("type") == "text":
+                draft.append(x.get("text", ""))
+            elif x.get("type") == "tool_result":
+                rc = x.get("content")
+                if isinstance(rc, str):
+                    ledger.append(rc)
+                elif isinstance(rc, list):
+                    ledger.extend(y.get("text", "") for y in rc if isinstance(y, dict) and y.get("type") == "text")
+    return "\n".join(draft).strip(), "\n".join(ledger)
+
+
+def _hook_reason(result, n_blocks, persisting, new):
+    out = [f"{HOOK_TAG} blocked this answer: these values do not trace to any tool output from this turn."]
+    for f in result["flagged"][:8]:
+        out.append(f"  [{f['verdict']}] {f['kind']}: {f['token']!r}")
+        out.append(f"        line: {f['line']!r}  ({_HOOK_LABEL.get(f['verdict'], '')})")
+    out.append("For each one: run a tool that returns it; or say on the same line that it is an estimate "
+               "(INFERRED, estimate, unverified) and where it came from; or remove it. For COMPOSED, quote the "
+               "relation from a tool or give the numbers separately. For COINCIDENT, write the label the output "
+               "shows next to the value.")
+    if n_blocks:
+        detail = []
+        if persisting:
+            detail.append("still there: " + ", ".join(repr(t) for t in persisting[:5]))
+        if new:
+            detail.append("new in the revision: " + ", ".join(repr(t) for t in new[:5]))
+        out.insert(0, "SECOND AND LAST BLOCK: the revision still has unsourced values (" + "; ".join(detail)
+                   + "). Do not swap in another unsourced number.")
+    return "\n".join(out)
+
+
+def hook_main(stdin=None, stdout=None):
+    """Claude Code Stop hook adapter. Prints {"decision": "block", "reason": ...} or nothing."""
+    import time
+    stdin = stdin or sys.stdin
+    stdout = stdout or sys.stdout
+    t0 = time.monotonic()
+
+    def metric(verdict, **extra):
+        path = os.environ.get("GROUNDING_METRICS")
+        if not path:
+            return
+        try:
+            row = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "hook": "grounding", "verdict": verdict,
+                   "ms": int((time.monotonic() - t0) * 1000), **extra}
+            with open(os.path.expanduser(path), "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    try:
+        ev = json.load(stdin)
+        rows = []
+        with open(ev.get("transcript_path") or "", encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    rows.append(json.loads(line))
+                except Exception:
+                    continue
+        start = max([i for i, r in enumerate(rows) if _is_real_prompt(r)] or [0])
+        turn = rows[start:]
+        fb = [i for i, r in enumerate(turn) if _is_own_feedback(r)]
+        if ev.get("stop_hook_active") and not fb:
+            metric("skip_other_hook")
+            return 0  # a continuation another Stop hook asked for: not ours to judge
+        prev = set(_FB_TOKEN.findall(_row_text(turn[fb[-1]]))) if fb else set()
+        draft = _collect(turn[fb[-1] + 1:] if fb else turn)[0]
+        # the transcript is often not flushed at Stop time: the event carries the final text
+        last = ev.get("last_assistant_message")
+        if isinstance(last, str) and last.strip() and last.strip() not in draft:
+            draft = (draft + "\n" + last).strip()
+        ledger = _collect(turn)[1]
+        if not draft:
+            metric("no_draft", n_blocks=len(fb))
+            return 0
+        r = check(draft, ledger)
+        try:
+            cap = int(os.environ.get("GROUNDING_MAX_BLOCKS", "2"))
+        except ValueError:
+            cap = 2
+        toks = [f["token"] for f in r["flagged"]]
+        if not r["block"]:
+            metric("pass" if not fb else "revision_pass", n_blocks=len(fb))
+            return 0
+        persisting = [t for t in toks if t in prev]
+        new = [t for t in toks if t not in prev] if fb else []
+        if len(fb) >= cap:
+            metric("escape", n_blocks=len(fb), tokens=toks[:5])
+            stdout.write(json.dumps({"systemMessage": f"grounding: answer left with unsourced values after "
+                                     f"{len(fb)} revisions: " + ", ".join(repr(t) for t in toks[:5])}) + "\n")
+            return 0
+        reason = _hook_reason(r, len(fb), persisting, new)
+    except Exception as e:  # fail open: a broken hook must not trap the session
+        metric("error", err=repr(e)[:120])
+        return 0
+    metric("block" if not fb else "reblock", n_blocks=len(fb), tokens=toks[:5])
+    stdout.write(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False) + "\n")
+    return 0
+
+
 # ------------------------------- selftest -------------------------------
 BUS_DRAFT = """
 carrier New Horizon, Executive service
@@ -1313,6 +1488,109 @@ def selftest():
     dense4 = "\n".join(f"row_{i}: {n}" for i, n in enumerate(range(1003, 9999, 7)))  # includes a bare 1717
     r = check("vitest 17/17", dense4 + "\nTests  17 passed (17)\n" + dense4)
     cases.append(("ratio_pair_exempt_from_density", r["block"] is False))
+    # (Z) Claude Code Stop hook (--hook): blocks the turn, checks the revision, caps at 2 blocks, fails open
+    import io, tempfile as _tf
+
+    def _u(t):
+        return {"type": "user", "message": {"role": "user", "content": t}}
+
+    def _a(t):
+        return {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": t}]}}
+
+    def _tool(out):
+        return {"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "x", "content": out}]}}
+
+    def _hook(rows, active=False, raw=None):
+        fn = globals().get("hook_main")
+        if fn is None:
+            return None
+        d = _tf.mkdtemp()
+        tp = os.path.join(d, "t.jsonl")
+        with open(tp, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
+        out = io.StringIO()
+        ev = raw if raw is not None else json.dumps({"session_id": "s", "transcript_path": tp, "stop_hook_active": active})
+        rc = fn(io.StringIO(ev), out)
+        return rc, out.getvalue()
+
+    tag = globals().get("HOOK_TAG", "GROUNDING GATE")
+
+    def _fb(tok):
+        row = _u("Stop hook feedback:\n" + tag + " blocked this answer.\n  [UNSOURCED] currency: '" + tok + "'")
+        row["isMeta"] = True  # how Claude Code writes hook feedback (2.1.261-2.1.284)
+        return row
+
+    base = [_u("what is the price?"), _a("the total price is R$ 82,05")]
+    h = _hook(base)
+    cases.append(("hook_blocks_unsourced", h is not None and '"decision": "block"' in h[1] and tag in h[1]))
+    h = _hook([_u("hi"), _a("all good here")])
+    cases.append(("hook_silent_on_clean_turn", h is not None and h == (0, "")))
+    h = _hook([_u("price?"), _tool("checkout total: R$ 82,05"), _a("the total is R$ 82,05")])
+    cases.append(("hook_silent_when_grounded", h is not None and h[1] == ""))
+    h = _hook(base + [_fb("R$ 82,05"), _a("confirmed: R$ 82,05")], active=True)
+    cases.append(("hook_rechecks_bare_revision", h is not None and "SECOND AND LAST BLOCK" in h[1]))
+    h = _hook(base + [_fb("R$ 82,05"), _a("R$ 82,05"), _fb("R$ 82,05"), _a("R$ 82,05 really")], active=True)
+    cases.append(("hook_caps_blocks_then_warns", h is not None and '"decision"' not in h[1] and "systemMessage" in h[1]))
+    h = _hook(base + [_fb("R$ 82,05"), _tool("checkout total: R$ 82,05"), _a("checked at checkout: R$ 82,05")], active=True)
+    cases.append(("hook_revision_grounded_by_new_tool_passes", h is not None and h[1] == ""))
+    h = _hook(base + [_fb("R$ 82,05"), _a("R$ 82,05 (unverified, from memory)")], active=True)
+    cases.append(("hook_declared_revision_passes", h is not None and h[1] == ""))
+    h = _hook(base + [_u("Stop hook feedback:\nANOTHER HOOK asked for a revision"), _a("ok R$ 82,05")], active=True)
+    cases.append(("hook_ignores_other_hooks_continuation", h is not None and h[1] == ""))
+    h1 = _hook([], raw='{"transcript_path": "/nonexistent/x.jsonl"}')
+    h2 = _hook([], raw="not json")
+    cases.append(("hook_fails_open", h1 is not None and h1 == (0, "") and h2 == (0, "")))
+    h = _hook([_u("coverage?"), _tool(dense), _a("final coverage is 37%")])
+    cases.append(("hook_labels_coincident", h is not None and "COINCIDENT" in h[1]))
+    # review 29/09: the final message is often not in the transcript yet at Stop time
+    fn = globals().get("hook_main")
+    if fn:
+        d = _tf.mkdtemp()
+        tp = os.path.join(d, "t.jsonl")
+        with open(tp, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(_u("what is the price?")) + "\n")
+        out = io.StringIO()
+        fn(io.StringIO(json.dumps({"transcript_path": tp, "stop_hook_active": False,
+                                   "last_assistant_message": "the total price is R$ 82,05"})), out)
+        cases.append(("hook_checks_last_assistant_message", '"decision": "block"' in out.getvalue()))
+    else:
+        cases.append(("hook_checks_last_assistant_message", False))
+    h = _hook([_u("the invoice is R$ 1.234,56, due 2026-10-15. confirm?"), _a("confirmed: R$ 1.234,56 due 2026-10-15")])
+    cases.append(("hook_user_prompt_values_are_sources", h is not None and h[1] == ""))
+    notif = _u("<task-notification>\n<result>order 7428 total: R$ 82,05</result>\n</task-notification>")
+    notif["origin"] = {"kind": "task-notification"}
+    h = _hook([notif, _a("the background task says the total is R$ 82,05")])
+    cases.append(("hook_task_notification_is_a_source", h is not None and h[1] == ""))
+    queued = {"type": "attachment", "attachment": {"type": "queued_command", "commandMode": "task-notification",
+                                                   "prompt": "<task-notification><result>R$ 82,05</result></task-notification>"}}
+    h = _hook([_u("price?"), queued, _a("the task reported R$ 82,05")])
+    cases.append(("hook_queued_notification_is_a_source", h is not None and h[1] == ""))
+    summary = _u("This session is being continued from a previous conversation that ran out of context.")
+    summary["isCompactSummary"] = True
+    h = _hook([_u("price?"), _tool("order 7428 total: R$ 82,05"), summary, _a("the total is R$ 82,05")])
+    cases.append(("hook_compact_summary_is_not_a_prompt", h is not None and h[1] == ""))
+    pasted = _u("Stop hook feedback:\n" + tag + " blocked this answer. why?")
+    pasted["origin"] = {"kind": "human"}
+    h = _hook([pasted, _a("it was about R$ 91,40")])
+    cases.append(("hook_pasted_feedback_is_a_prompt", h is not None and "SECOND" not in h[1] and '"block"' in h[1]))
+    old = os.environ.get("GROUNDING_MAX_BLOCKS")
+    os.environ["GROUNDING_MAX_BLOCKS"] = "two"
+    try:
+        h = _hook(base)
+    except Exception:
+        h = None
+    finally:
+        if old is None:
+            os.environ.pop("GROUNDING_MAX_BLOCKS", None)
+        else:
+            os.environ["GROUNDING_MAX_BLOCKS"] = old
+    cases.append(("hook_bad_max_blocks_env_falls_back", h is not None and '"block"' in h[1]))
+    import subprocess as _sp
+    p_ = _sp.run([sys.executable, os.path.abspath(__file__), "check", "--draft", "/nonexistent/draft.txt"],
+                 capture_output=True, text=True)
+    cases.append(("cli_io_error_exits_3_not_1", p_.returncode == 3))
+
     #     old callers that pass only facts keep the v2.5 behaviour
     f25, p25 = ledger_facts(dense)
     cases.append(("classify_without_index_is_v25", classify("37%", "percent", "a cobertura é 37%", f25, p25) == "GROUNDED"))
@@ -1334,18 +1612,25 @@ def main():
     c.add_argument("--json", action="store_true")
 
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--hook", action="store_true", help="run as a Claude Code Stop hook (event JSON on stdin)")
     args = ap.parse_args()
 
     if args.selftest:
         sys.exit(0 if selftest() else 1)
+    if args.hook:
+        sys.exit(hook_main())
 
     if args.cmd == "check":
-        with open(args.draft, encoding="utf-8") as f:
-            draft = f.read()
-        ledger = ""
-        if args.ledger:
-            with open(args.ledger, encoding="utf-8") as f:
-                ledger = f.read()
+        try:
+            with open(args.draft, encoding="utf-8") as f:
+                draft = f.read()
+            ledger = ""
+            if args.ledger:
+                with open(args.ledger, encoding="utf-8") as f:
+                    ledger = f.read()
+        except OSError as e:  # exit 3, so a pipeline can tell a setup error from a block (exit 1)
+            print(f"grounding: cannot read input: {e}", file=sys.stderr)
+            sys.exit(3)
         r = check(draft, ledger)
         if args.json:
             print(json.dumps(r, ensure_ascii=False, indent=2))

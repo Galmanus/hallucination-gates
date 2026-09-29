@@ -113,7 +113,7 @@ its residual is theatre.
   selftests, not by an AUROC number.
 - **Only `grounding` and `action_gate` are measured.** `eval/RESULTS.md` replays
   2,711 real agent turns and 709 real side-effecting tool calls. The other
-  modules are validated by their offline selftests (321 across all six). A
+  modules are validated by their offline selftests (339 across all six). A
   SimpleQA / TruthfulQA evaluation of the semantic-entropy detector is still
   the next milestone; until it lands, treat `selfcheck` as a reference
   implementation, not a benchmarked detector.
