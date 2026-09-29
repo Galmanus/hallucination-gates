@@ -198,6 +198,18 @@ The v2.5 path is the same code with the look-elsewhere test off. `4.812`, `17 te
 
 **Cost on real drafts** (2,711 turns, v2.5 path vs v2.6 on the same index): 70 of 6,539 token verdicts change (56 percents, 9 currency amounts and 2 dates become `COINCIDENT`; 3 lines become `DECLARED`), and blocked turns go from 850 to 871. Every `COINCIDENT` value is, by definition, present in the ledger, so section 2's "verbatim in ledger" error count no longer applies to v2.6. A hand-read sample of 25 changed verdicts (labelled by Claude, provisional) held about 6 real catches (opinion estimates that had grounded by chance) and about 10 false blocks. Two of the false blocks were a bug, fixed and turned into a selftest (a ratio's concatenated digits were being density-tested). The remaining false blocks: a Portuguese draft quoting an English ledger (no shared anchor word), CSS values, and round constants such as a 95% confidence level.
 
+**The synthetic probes on v2.6** (`synth.py`, seed 42, the same draws as v2.5):
+
+| probe | n | v2.5 | **v2.6** |
+|---|--:|--:|--:|
+| fabricated token let through, 14 shapes, non-empty ledgers | 19,110 | 2 (0.01%) | **2 (0.01%)** [0.00, 0.04] |
+| fabricated receipt let through | 4,746 | 0 | **0** [0.00, 0.08] |
+| real percent with its sign flipped, let through | 378 | 4 (1.1%) | **0** [0.00, 1.01] |
+| real token copied from the ledger, wrongly blocked | 2,926 | 3 (0.10%) | **22 (0.75%)** [0.50, 1.14] |
+| **correct** shown sum, wrongly blocked | 1,254 | 0 | **655 (52.23%)** [49.47, 54.99] |
+
+The last two rows are the price of the look-elsewhere test, and the probes are its worst case. `synth.py` copies a real token onto a line with a random label (`row gh: 37%`), and builds its "correct sum" from two integers picked at random anywhere in the ledger, with `R$` put in front. Two unrelated bare numbers with no label are exactly what a coincidence looks like, so v2.6 blocks them when the ledger is dense. A real answer that copies a value with its label passes (the `copied_ctx` control above), and on real drafts the blocked turns rose from 850 to 871. The sign-flip leak closed for the same reason: a flipped percent used to ground on an unrelated negative number elsewhere in the ledger.
+
 **Parity and latency.** The production copy of the matcher gives the same verdict as `grounding.py` on all 2,711 corpus turns. `check()` latency is unchanged: p50 3,101 ms vs 3,096 ms on the 15 largest ledgers (up to 3.8 MB), 10 ms vs 13 ms on 150 random turns.
 
 **Not solved.** At 4M characters, 47.29% of invented integer percents still pass, because common words (`item`, `total`) sit near some occurrence of almost any 2-digit number. Anchors are not weighted by their own frequency, and anchors do not cross languages.
